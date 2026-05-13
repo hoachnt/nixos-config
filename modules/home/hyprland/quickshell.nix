@@ -51,33 +51,23 @@
         pkgs.writeText "patch-main-qml.py" ''
           import pathlib
           import sys
+          import re
 
           out = pathlib.Path(sys.argv[1])
           p = out / "quickshell/Main.qml"
           t = p.read_text()
 
-          # Legacy Main.qml: mask + compact topBarHole + MouseArea (ilyamiro ~0291dea).
-          old_top_hole = (
-              "    Item {\n"
-              "        id: topBarHole\n"
-              "        anchors.top: parent.top\n"
-              "        anchors.left: parent.left\n"
-              "        anchors.right: parent.right\n"
-              "        height: 65 \n"
-              "    }\n\n"
-              "    MouseArea {\n"
-              "        anchors.fill: parent\n"
-              "        enabled: masterWindow.isVisible\n"
-              "        onClicked: switchWidget(\"hidden\", \"\")\n"
-              "    }\n"
-          )
+          # 1. Patch topBarHole
+          top_hole_rx = re.compile(r'(?P<indent>[ \t]*)Item\s*\{\s*id:\s*topBarHole.*?height:\s*\d+.*?\n(?P=indent)\}', re.DOTALL)
+          if not top_hole_rx.search(t):
+              sys.exit("Main.qml: topBarHole block not recognized (regex failed).")
+
           new_top_hole = (
               "    Item {\n"
               "        id: topBarHole\n"
               "        anchors.top: parent.top\n"
               "        anchors.left: parent.left\n"
               "        anchors.right: parent.right\n"
-              "        // Same vertical extent as TopBar: barHeight s(48) + top s(4) + bottom s(2) (= s(54)), scaled (see TopBar.qml)\n"
               "        height: Math.max(1, Math.round(54 * masterWindow.globalUiScale))\n"
               "    }\n\n"
               "    Rectangle {\n"
@@ -89,150 +79,67 @@
               "        }\n"
               "        color: Qt.rgba(0, 0, 0, 0.45)\n"
               "        z: -1\n"
-              "    }\n\n"
-              "    MouseArea {\n"
-              "        anchors.fill: parent\n"
-              "        enabled: masterWindow.isVisible\n"
-              "        onClicked: switchWidget(\"hidden\", \"\")\n"
-              "    }\n"
+              "    }"
           )
-          if old_top_hole not in t:
-              sys.exit(
-                  "Main.qml: topBarHole block not recognized — flake input ilyamiro-config rev does not match patchMainQmlPy."
-              )
-          t = t.replace(old_top_hole, new_top_hole, 1)
+          t = top_hole_rx.sub(new_top_hole, t, count=1)
 
-          a = (
-              "    property bool isVisible: false\n"
-              "    property string activeArg: \"\""
-          )
-          b = (
-              "    property bool isVisible: false\n"
-              "    property bool overlayDismissReady: false\n"
-              "    property string activeArg: \"\""
-          )
-          if a not in t:
-              sys.exit("Main.qml: expected isVisible/activeArg block not found")
-          t = t.replace(a, b, 1)
+          # 2. Inject overlayDismissReady property
+          prop_rx = re.compile(r'(property\s+bool\s+isVisible:\s*false\s*\n)')
+          if not prop_rx.search(t):
+              sys.exit("Main.qml: isVisible property not found")
+          t = prop_rx.sub(r'\g<1>    property bool overlayDismissReady: false\n', t, count=1)
 
-          marker = "    property real globalUiScale: 1.0\n\n    // =========================================================\n"
-          timer = (
-              "    property real globalUiScale: 1.0\n\n"
+          # 3. Inject overlayDismissCooldown Timer
+          scale_rx = re.compile(r'(property\s+real\s+globalUiScale:\s*[\d.]+\s*\n)')
+          if not scale_rx.search(t):
+              sys.exit("Main.qml: globalUiScale property not found")
+          timer_block = (
               "    Timer {\n"
               "        id: overlayDismissCooldown\n"
               "        interval: 380\n"
               "        repeat: false\n"
               "        onTriggered: masterWindow.overlayDismissReady = true\n"
-              "    }\n\n"
-              "    // =========================================================\n"
+              "    }\n"
           )
-          if marker not in t:
-              sys.exit("Main.qml: globalUiScale marker not found")
-          t = t.replace(marker, timer, 1)
+          t = scale_rx.sub(r'\g<1>\n' + timer_block + '\n', t, count=1)
 
-          old_vis = (
-              "    onIsVisibleChanged: {\n"
-              "        if (isVisible) masterWindow.requestActivate();\n"
-              "    }\n"
-          )
-          new_vis = (
-              "    onIsVisibleChanged: {\n"
-              "        overlayDismissCooldown.stop()\n"
-              "        if (isVisible) {\n"
-              "            masterWindow.overlayDismissReady = false\n"
-              "            overlayDismissCooldown.start()\n"
-              "            masterWindow.requestActivate()\n"
-              "        } else {\n"
-              "            masterWindow.overlayDismissReady = false\n"
-              "        }\n"
-              "    }\n"
-          )
-          old_vis_stack = (
-              "    onIsVisibleChanged: {\n"
-              "        if (isVisible) widgetStack.forceActiveFocus();\n"
-              "    }\n"
-          )
-          new_vis_stack = (
-              "    onIsVisibleChanged: {\n"
-              "        overlayDismissCooldown.stop()\n"
-              "        if (isVisible) {\n"
-              "            masterWindow.overlayDismissReady = false\n"
-              "            overlayDismissCooldown.start()\n"
-              "            masterWindow.requestActivate()\n"
-              "            widgetStack.forceActiveFocus();\n"
-              "        } else {\n"
-              "            masterWindow.overlayDismissReady = false\n"
-              "        }\n"
-              "    }\n"
-          )
-          if old_vis in t:
-              t = t.replace(old_vis, new_vis, 1)
-          elif old_vis_stack in t:
-              t = t.replace(old_vis_stack, new_vis_stack, 1)
-          else:
-              sys.exit("Main.qml: onIsVisibleChanged block not found")
+          # 4. Patch onIsVisibleChanged
+          vis_rx = re.compile(r'(onIsVisibleChanged:\s*\{)(.*?)(^\s*\})', re.DOTALL | re.MULTILINE)
+          def replace_vis(match):
+              inner = match.group(2)
+              focus = "            widgetStack.forceActiveFocus();\n" if "forceActiveFocus" in inner else ""
+              new_inner = (
+                  "\n        overlayDismissCooldown.stop()\n"
+                  "        if (isVisible) {\n"
+                  "            masterWindow.overlayDismissReady = false\n"
+                  "            overlayDismissCooldown.start()\n"
+                  "            masterWindow.requestActivate()\n"
+                  f"{focus}"
+                  "        } else {\n"
+                  "            masterWindow.overlayDismissReady = false\n"
+                  "        }\n"
+              )
+              return match.group(1) + new_inner + match.group(3)
 
-          old_mouse = (
-              "    MouseArea {\n"
-              "        anchors.fill: parent\n"
-              "        enabled: masterWindow.isVisible\n"
-              "        onClicked: switchWidget(\"hidden\", \"\")\n"
-              "    }\n\n"
-              "    Component.onCompleted:"
-          )
-          new_mouse = (
-              "    MouseArea {\n"
-              "        anchors.fill: parent\n"
-              "        enabled: masterWindow.isVisible && masterWindow.overlayDismissReady\n"
-              "        onClicked: switchWidget(\"hidden\", \"\")\n"
-              "    }\n\n"
-              "    Component.onCompleted:"
-          )
-          old_mouse_brace = (
-              "    MouseArea {\n"
-              "        anchors.fill: parent\n"
-              "        enabled: masterWindow.isVisible\n"
-              "        onClicked: switchWidget(\"hidden\", \"\")\n"
-              "    }\n\n"
-              "    Component.onCompleted: {"
-          )
-          new_mouse_brace = (
-              "    MouseArea {\n"
-              "        anchors.fill: parent\n"
-              "        enabled: masterWindow.isVisible && masterWindow.overlayDismissReady\n"
-              "        onClicked: switchWidget(\"hidden\", \"\")\n"
-              "    }\n\n"
-              "    Component.onCompleted: {"
-          )
-          if old_mouse in t:
-              t = t.replace(old_mouse, new_mouse, 1)
-          elif old_mouse_brace in t:
-              t = t.replace(old_mouse_brace, new_mouse_brace, 1)
-          else:
-              sys.exit("Main.qml: root dismiss MouseArea before Component.onCompleted not found")
+          if not vis_rx.search(t):
+              sys.exit("Main.qml: onIsVisibleChanged not found")
+          t = vis_rx.sub(replace_vis, t, count=1)
 
-          # Quickshell/Qt: WlrLayershell deprecates plain width/height on PanelWindow; implicit size can stay 0
-          # while the layer still participates in Hyprland blur → wallpaper (and other) widgets look "empty".
-          shell_wh_old = (
-              "    width: Screen.width\n"
-              "    height: Screen.height\n\n"
-              "    visible: isVisible\n"
+          # 5. Patch dismiss MouseArea
+          mouse_rx = re.compile(r'(MouseArea\s*\{.*?enabled:\s*masterWindow\.isVisible)(.*?onClicked:\s*switchWidget\("hidden",\s*""\).*?\})', re.DOTALL)
+          if not mouse_rx.search(t):
+              sys.exit("Main.qml: dismiss MouseArea not found")
+          t = mouse_rx.sub(r'\g<1> && masterWindow.overlayDismissReady\g<2>', t, count=1)
+
+          # 6. Patch PanelWindow sizing
+          size_rx = re.compile(r'width:\s*(Screen\.width|masterWindow\.screen\.width)\s*\n\s*height:\s*(Screen\.height|masterWindow\.screen\.height)')
+          new_size = (
+              r"implicitWidth: Math.max(1, \g<1>)\n"
+              r"    implicitHeight: Math.max(1, \g<2>)\n"
+              r"    width: implicitWidth\n"
+              r"    height: implicitHeight"
           )
-          shell_wh_new = (
-              "    implicitWidth: Math.max(1, Screen.width)\n"
-              "    implicitHeight: Math.max(1, Screen.height)\n"
-              "    width: implicitWidth\n"
-              "    height: implicitHeight\n\n"
-              "    visible: isVisible\n"
-          )
-          if "implicitWidth: Math.max(1, Screen.width)" in t:
-              pass
-          elif shell_wh_old in t:
-              t = t.replace(shell_wh_old, shell_wh_new, 1)
-          elif "implicitWidth: masterWindow.screen.width" in t:
-              pass
-          else:
-              sys.exit("Main.qml: PanelWindow sizing not recognized (Screen.width or masterWindow.screen)")
+          t = size_rx.sub(new_size, t, count=1)
 
           p.write_text(t)
         '';
@@ -242,6 +149,7 @@
         pkgs.writeText "patch-guide-popup.py" ''
           import pathlib
           import sys
+          import re
 
           out = pathlib.Path(sys.argv[1])
           p = out / "quickshell/guide/GuidePopup.qml"
@@ -249,83 +157,35 @@
               sys.exit("GuidePopup.qml not found")
           t = p.read_text()
 
-          # Upstream buildKeybinds() uses objects with `cmd:` (ilyamiro ~0291dea).
-          subs = [
-              (
-                  '{ k1: "SUPER", k2: "D", action: "App Launcher (Drun)", cmd: "bash ~/.config/hypr/scripts/rofi_show.sh drun" },',
-                  '{ k1: "CTRL+ALT", k2: "D", action: "App Launcher (Drun)", cmd: "bash ~/.config/hypr/scripts/rofi_show.sh drun" },',
-              ),
-              (
-                  '{ k1: "ALT", k2: "TAB", action: "Window Switcher", cmd: "bash ~/.config/hypr/scripts/rofi_show.sh window" },',
-                  '{ k1: "CTRL+ALT", k2: "TAB", action: "Window Switcher (Rofi)", cmd: "bash ~/.config/hypr/scripts/rofi_show.sh window" },',
-              ),
-              (
-                  '{ k1: "SUPER", k2: "C", action: "Clipboard History", cmd: "bash ~/.config/hypr/scripts/rofi_clipboard.sh" },',
-                  '{ k1: "CTRL+ALT", k2: "C", action: "Clipboard History", cmd: "bash ~/.config/hypr/scripts/rofi_clipboard.sh" },',
-              ),
-              (
-                  '{ k1: "SUPER", k2: "W", action: "Toggle Wallpaper", cmd: "bash ~/.config/hypr/scripts/qs_manager.sh toggle wallpaper" },',
-                  '{ k1: "CTRL+ALT", k2: "W", action: "Toggle Wallpaper", cmd: "bash ~/.config/hypr/scripts/qs_manager.sh toggle wallpaper" },',
-              ),
-              (
-                  '{ k1: "SUPER", k2: "Q", action: "Toggle Music", cmd: "bash ~/.config/hypr/scripts/qs_manager.sh toggle music" },',
-                  '{ k1: "CTRL+ALT", k2: "Q", action: "Toggle Music", cmd: "bash ~/.config/hypr/scripts/qs_manager.sh toggle music" },',
-              ),
-              (
-                  '{ k1: "SUPER", k2: "B", action: "Toggle Battery", cmd: "bash ~/.config/hypr/scripts/qs_manager.sh toggle battery" },',
-                  '{ k1: "CTRL+ALT", k2: "B", action: "Toggle Battery", cmd: "bash ~/.config/hypr/scripts/qs_manager.sh toggle battery" },',
-              ),
-              (
-                  '{ k1: "SUPER", k2: "S", action: "Toggle Calendar", cmd: "bash ~/.config/hypr/scripts/qs_manager.sh toggle calendar" },',
-                  '{ k1: "CTRL+ALT", k2: "S", action: "Toggle Calendar", cmd: "bash ~/.config/hypr/scripts/qs_manager.sh toggle calendar" },',
-              ),
-              (
-                  '{ k1: "SUPER", k2: "N", action: "Toggle Network", cmd: "bash ~/.config/hypr/scripts/qs_manager.sh toggle network" },',
-                  '{ k1: "CTRL+ALT", k2: "N", action: "Toggle Network", cmd: "bash ~/.config/hypr/scripts/qs_manager.sh toggle network" },',
-              ),
-              (
-                  '{ k1: "SUPER", k2: "V", action: "Toggle Volume", cmd: "bash ~/.config/hypr/scripts/qs_manager.sh toggle volume" },',
-                  '{ k1: "CTRL+ALT", k2: "V", action: "Toggle Volume", cmd: "bash ~/.config/hypr/scripts/qs_manager.sh toggle volume" },',
-              ),
-              (
-                  '{ k1: "SUPER", k2: "M", action: "Toggle Monitors", cmd: "bash ~/.config/hypr/scripts/qs_manager.sh toggle monitors" },',
-                  '{ k1: "CTRL+ALT", k2: "M", action: "Toggle Monitors", cmd: "bash ~/.config/hypr/scripts/qs_manager.sh toggle monitors" },',
-              ),
-              (
-                  '{ k1: "SUPER", k2: "H", action: "Toggle Guide", cmd: "bash ~/.config/hypr/scripts/qs_manager.sh toggle guide" },',
-                  '{ k1: "CTRL+ALT", k2: "H", action: "Toggle Guide", cmd: "bash ~/.config/hypr/scripts/qs_manager.sh toggle guide" },',
-              ),
-              (
-                  '{ k1: "SUPER+SHIFT", k2: "S", action: "Toggle Settings", cmd: "bash ~/.config/hypr/scripts/qs_manager.sh toggle settings" },',
-                  '{ k1: "CTRL+ALT+SHIFT", k2: "S", action: "Toggle Settings", cmd: "bash ~/.config/hypr/scripts/qs_manager.sh toggle settings" },',
-              ),
-              (
-                  '{ k1: "SUPER", k2: "R", action: "Reload System", cmd: "bash ~/.config/hypr/scripts/reload.sh" },',
-                  '{ k1: "SUPER", k2: "R", action: "App Launcher (Rofi)", cmd: "bash ~/.config/hypr/scripts/rofi_show.sh drun" },',
-              ),
-              (
-                  '{ k1: "SUPER+SHIFT", k2: "T", action: "Toggle FocusTime", cmd: "bash ~/.config/hypr/scripts/qs_manager.sh toggle focustime" },',
-                  '{ k1: "CTRL+ALT+SHIFT", k2: "T", action: "Toggle FocusTime", cmd: "bash ~/.config/hypr/scripts/qs_manager.sh toggle focustime" },',
-              ),
-              (
-                  '{ k1: "SUPER", k2: "A", action: "Toggle SwayNC Panel", cmd: "swaync-client -t -sw" },',
-                  '{ k1: "CTRL+ALT", k2: "A", action: "Toggle SwayNC Panel", cmd: "swaync-client -t -sw" },',
-              ),
+          updates = [
+              ("D", r"SUPER", "CTRL+ALT", "App Launcher (Drun)", "bash ~/.config/hypr/scripts/rofi_show.sh drun"),
+              ("TAB", r"ALT", "CTRL+ALT", "Window Switcher (Rofi)", "bash ~/.config/hypr/scripts/rofi_show.sh window"),
+              ("C", r"SUPER", "CTRL+ALT", "Clipboard History", "bash ~/.config/hypr/scripts/rofi_clipboard.sh"),
+              ("W", r"SUPER", "CTRL+ALT", "Toggle Wallpaper", "bash ~/.config/hypr/scripts/qs_manager.sh toggle wallpaper"),
+              ("Q", r"SUPER", "CTRL+ALT", "Toggle Music", "bash ~/.config/hypr/scripts/qs_manager.sh toggle music"),
+              ("B", r"SUPER", "CTRL+ALT", "Toggle Battery", "bash ~/.config/hypr/scripts/qs_manager.sh toggle battery"),
+              ("S", r"SUPER", "CTRL+ALT", "Toggle Calendar", "bash ~/.config/hypr/scripts/qs_manager.sh toggle calendar"),
+              ("N", r"SUPER", "CTRL+ALT", "Toggle Network", "bash ~/.config/hypr/scripts/qs_manager.sh toggle network"),
+              ("V", r"SUPER", "CTRL+ALT", "Toggle Volume", "bash ~/.config/hypr/scripts/qs_manager.sh toggle volume"),
+              ("M", r"SUPER", "CTRL+ALT", "Toggle Monitors", "bash ~/.config/hypr/scripts/qs_manager.sh toggle monitors"),
+              ("H", r"SUPER", "CTRL+ALT", "Toggle Guide", "bash ~/.config/hypr/scripts/qs_manager.sh toggle guide"),
+              ("S", r"SUPER\+SHIFT", "CTRL+ALT+SHIFT", "Toggle Settings", "bash ~/.config/hypr/scripts/qs_manager.sh toggle settings"),
+              ("R", r"SUPER", "SUPER", "App Launcher (Rofi)", "bash ~/.config/hypr/scripts/rofi_show.sh drun"),
+              ("T", r"SUPER\+SHIFT", "CTRL+ALT+SHIFT", "Toggle FocusTime", "bash ~/.config/hypr/scripts/qs_manager.sh toggle focustime"),
+              ("A", r"SUPER", "CTRL+ALT", "Toggle SwayNC Panel", "swaync-client -t -sw"),
           ]
-          for old, new in subs:
-              if old not in t:
-                  sys.exit("GuidePopup.qml: substring not found:\\n" + old)
-              t = t.replace(old, new, 1)
+
+          for k2, old_k1_rx, new_k1, new_act, new_cmd in updates:
+              pattern = re.compile(
+                  r'\{\s*k1:\s*"' + old_k1_rx + r'"\s*,\s*k2:\s*"' + re.escape(k2) + r'".*?\}',
+                  re.DOTALL | re.IGNORECASE
+              )
+              replacement = f'{{ k1: "{new_k1}", k2: "{k2}", action: "{new_act}", cmd: "{new_cmd}" }}'
+              t = pattern.sub(replacement, t, count=1)
 
           p.write_text(t)
         '';
 
-      # Upstream ties ListView/filter chrome opacity to FolderListModel.Ready only. On NixOS paths can sit in
-      # Loading forever or Error — never Ready — so isReady stays false and the whole picker stays invisible.
-      # You then only see Hyprland blur on qs-master ("milky mask"). Force UI visible regardless of model status.
-      #
-      # Root Item used `width: Screen.width`: when Quickshell reports Screen.width === 0 (common early in session),
-      # the picker stays zero-width inside Main.qml's clip — same blur-only symptom. Fill StackView parent + scaler fallback.
       patchWallpaperPickerPy =
         pkgs.writeText "patch-wallpaper-picker.py" ''
           import os
@@ -356,20 +216,25 @@
               "    id: window\n"
               "    width: Screen.width\n"
               "\n"
-              "    // --- Responsive Scaling Logic ---\n"
+              "    Caching { id: paths }\n"
+              "\n"
               "    Scaler {\n"
               "        id: scaler\n"
-              "        currentWidth: Screen.width"
+              "        currentWidth: Screen.width\n"
+              "    }\n"
           )
           root_block_new = (
               "Item {\n"
               "    id: window\n"
               "    anchors.fill: parent\n"
               "\n"
+              "    Caching { id: paths }\n"
+              "\n"
               "    // --- Responsive Scaling Logic ---\n"
               "    Scaler {\n"
               "        id: scaler\n"
-              "        currentWidth: Math.max(window.width, Screen.width) || 1920"
+              "        currentWidth: Math.max(window.width, Screen.width) || 1920\n"
+              "    }\n"
           )
           if root_block_old not in t:
               sys.exit("WallpaperPicker.qml: root Item / Scaler block not found")
@@ -414,16 +279,7 @@
           )
           if home_needle not in t:
               sys.exit("WallpaperPicker.qml: homeDir line not found")
-          t = t.replace(home_needle, home_insert, 1)
-
-          src_old = (
-              "    readonly property string srcDir: {\n"
-              "    \tconst dir = Quickshell.env(\"WALLPAPER_DIR\")\n"
-              "    \treturn (dir && dir !== \"\") \n"
-              "        ? dir \n"
-              "        : Quickshell.env(\"HOME\") + \"/Pictures/Wallpapers\"\n"
-              "    }\n"
-          )
+          src_old = '    readonly property string srcDir: Quickshell.env("HOME") + "/Pictures/Wallpapers"\n'
           src_new = (
               "    readonly property string srcDir: {\n"
               "        let d = String(window.wallpaperDirFromJson || \"\")\n"
@@ -435,9 +291,21 @@
               "        return d\n"
               "    }\n"
           )
-          if src_old not in t:
+          src_old_2 = (
+              "    readonly property string srcDir: {\n"
+              "        const dir = Quickshell.env(\"WALLPAPER_DIR\")\n"
+              "        return (dir && dir !== \"\") \n"
+              "        ? dir \n"
+              "        : Quickshell.env(\"HOME\") + \"/Pictures/Wallpapers\"\n"
+              "    }\n"
+          )
+
+          if src_old in t:
+              t = t.replace(src_old, src_new, 1)
+          elif src_old_2 in t:
+              t = t.replace(src_old_2, src_new, 1)
+          else:
               sys.exit("WallpaperPicker.qml: srcDir block not found")
-          t = t.replace(src_old, src_new, 1)
 
           lv_old = (
               "        highlightRangeMode: ListView.StrictlyEnforceRange\n"
@@ -458,6 +326,8 @@
           completed_needle = (
               "        Quickshell.execDetached([\"bash\", \"-c\", \"mkdir -p '\" + decodeURIComponent(window.searchDir.replace(\"file://\", \"\")) + \"'\"]);\n"
               "        \n"
+              "        window.loadMonitors();\n"
+              "\n"
               "        if (searchState.searched) {\n"
           )
           completed_insert = (
@@ -467,6 +337,8 @@
               "            window.tryFocus();\n"
               "        });\n"
               "        \n"
+              "        window.loadMonitors();\n"
+              "\n"
               "        if (searchState.searched) {\n"
           )
           if completed_needle not in t:
@@ -487,61 +359,24 @@
           p.write_text(t)
         '';
 
-      # Settings Apply used `echo '" + pretty-printed JSON + "'` — multiline JSON breaks the shell string, so nothing was written.
-      # Guide writes API keys to scripts/quickshell/calendar/.env — that path is inside the HM symlink to the
-      # Nix store and is read-only. Use ~/.config/hypr/weather.env + heredoc (safe for quotes in keys).
       patchGuideWeatherPy =
         pkgs.writeText "patch-guide-weather.py" ''
           import json
           import os
           import pathlib
           import sys
+          import re
 
           out = pathlib.Path(sys.argv[1])
           qs = os.environ.get("QUICKSHELL_EXE", "quickshell")
           p = out / "quickshell/guide/GuidePopup.qml"
           if not p.is_file():
-              sys.exit("GuidePopup.qml not found")
+              print("Warning: GuidePopup.qml not found. Skipping weather patch.", file=sys.stderr)
+              sys.exit(0)
+              
           t = p.read_text()
 
-          old_upstream = (
-              "                function saveWeatherConfig() {\n"
-              "                    var cache_weather = Quickshell.env(\"HOME\") + \"/.cache/quickshell/weather\";\n"
-              "                    var file = Quickshell.env(\"HOME\") + \"/.config/hypr/scripts/quickshell/calendar/.env\";\n"
-              "                    var cmds = [\n"
-              "                        \"mkdir -p $(dirname \" + file + \")\",\n"
-              "                        \"echo '# OpenWeather API Configuration (OVERWRITE, not add)' > \" + file,\n"
-              "                        \"echo 'OPENWEATHER_KEY=\" + apiKeyInput.text + \"' >> \" + file,\n"
-              "                        \"echo 'OPENWEATHER_CITY_ID=\" + cityIdInput.text + \"' >> \" + file,\n"
-              "                        \"echo 'OPENWEATHER_UNIT=\" + weatherTab.selectedUnit + \"' >> \" + file,\n"
-              "                        \"rm -r \" + cache_weather,\n"
-              "                        \"notify-send 'Weather' 'API configuration saved successfully!'\"\n"
-              "                    ];\n"
-              "                    var finalCmd = cmds.join(\" && \");\n"
-              "                    Quickshell.execDetached([\"bash\", \"-c\", finalCmd]);\n"
-              "                }"
-          )
-          # bash rejects `<<EOF` … newline … `&&` after heredoc end inside `bash -c` without wrapping `( … )`
-          old_broken_heredoc = (
-              "                function saveWeatherConfig() {\n"
-              "                    var home = Quickshell.env(\"HOME\");\n"
-              "                    var envPath = home + \"/.config/hypr/weather.env\";\n"
-              "                    var cacheWeather = home + \"/.cache/quickshell/weather\";\n"
-              "                    var marker = \"QS_WEATHER_ENV_\" + Math.random().toString(36).slice(2) + \"_\" + Date.now();\n"
-              "                    var body = \"# OpenWeather API Configuration\\n\" +\n"
-              "                        \"OPENWEATHER_KEY=\" + apiKeyInput.text + \"\\n\" +\n"
-              "                        \"OPENWEATHER_CITY_ID=\" + cityIdInput.text + \"\\n\" +\n"
-              "                        \"OPENWEATHER_UNIT=\" + weatherTab.selectedUnit + \"\\n\";\n"
-              "                    var cmd =\n"
-              "                        \"mkdir -p '\" + home + \"/.config/hypr' && cat > '\" + envPath + \"' <<'\" + marker + \"'\\n\" +\n"
-              "                        body +\n"
-              "                        marker + \"\\n\" +\n"
-              "                        \"&& rm -rf '\" + cacheWeather + \"' 2>/dev/null || true\" +\n"
-              "                        \" && notify-send 'Weather' 'API configuration saved successfully!'\";\n"
-              "                    Quickshell.execDetached([\"bash\", \"-c\", cmd]);\n"
-              "                }"
-          )
-          new = (
+          new_func = (
               "                function saveWeatherConfig() {\n"
               "                    var home = Quickshell.env(\"HOME\");\n"
               "                    var envPath = home + \"/.config/hypr/weather.env\";\n"
@@ -565,12 +400,30 @@
               + ', "-p", home + "/.config/hypr/scripts/quickshell/TopBar.qml", "ipc", "call", "topbar", "refreshWeather"]);\n'
               "                }"
           )
-          if old_upstream in t:
-              t = t.replace(old_upstream, new, 1)
-          elif old_broken_heredoc in t:
-              t = t.replace(old_broken_heredoc, new, 1)
+
+          match = re.search(r'function\s+saveWeatherConfig\s*\(\)\s*\{', t)
+          if match:
+              start_idx = match.start()
+              brace_idx = t.find('{', start_idx)
+              depth = 0
+              end_idx = -1
+              
+              for i in range(brace_idx, len(t)):
+                  if t[i] == '{':
+                      depth += 1
+                  elif t[i] == '}':
+                      depth -= 1
+                      if depth == 0:
+                          end_idx = i + 1
+                          break
+              
+              if end_idx != -1:
+                  t = t[:start_idx] + new_func + t[end_idx:]
+              else:
+                  print("Warning: GuidePopup.qml: saveWeatherConfig brace parse failed. Skipping patch.", file=sys.stderr)
           else:
-              sys.exit("GuidePopup.qml: saveWeatherConfig block not found")
+              print("Warning: GuidePopup.qml: saveWeatherConfig function not found. Upstream likely changed. Skipping patch.", file=sys.stderr)
+
           p.write_text(t)
         '';
 
@@ -610,7 +463,6 @@
           if oldEnv in t:
               t = t.replace(oldEnv, newEnv, 1)
 
-          # env_changed: was touch + get_data& then cat — raced with stale json
           oldJson = (
               "        if [ \"$env_changed\" -eq 1 ]; then\n"
               "            # The user just modified the .env file. Bypass cache entirely.\n"
@@ -745,7 +597,6 @@
               p.write_text(t[:k] + add + t[k:])
         '';
 
-      # Writable default seeded on activate — not a home.file store symlink (Apply must overwrite).
       defaultHyprSettingsJson =
         pkgs.writeText "hypr-quickshell-settings-default.json" (
           builtins.toJSON {
@@ -796,7 +647,6 @@
               "        }\n"
               "    }"
           )
-          # Single bash -c chain: write settings → sync /tmp/qs_workspaces.json → topbar queueReload (avoids race between detached bashes)
           new_save = (
               "    function saveAppSettings() {\n"
               "        let config = {\n"
@@ -828,12 +678,12 @@
               "    }"
           )
           if old_save not in t:
-              sys.exit("SettingsPopup.qml: saveAppSettings block not found")
-          t = t.replace(old_save, new_save, 1)
-          p.write_text(t)
+              print("Warning: SettingsPopup.qml: saveAppSettings block not found. Skipping patch.", file=sys.stderr)
+          else:
+              t = t.replace(old_save, new_save, 1)
+              p.write_text(t)
         '';
 
-      # If Screen.width/height are briefly 0 in Quickshell, wallpaper layout becomes w: 0 — clip rect empty (milky blur only).
       patchWindowRegistryJs =
         pkgs.writeText "patch-window-registry.py" ''
           import pathlib
@@ -859,9 +709,6 @@
           p.write_text(t.replace(needle, insert, 1))
         '';
 
-      # Wallpaper widget is the only one that shells out to magick/ffmpeg for thumbnails and reads WALLPAPER_DIR.
-      # Hyprland `exec` / keybind env often omits HM packages from PATH → thumbnails never generate (empty carousel).
-      # qs_manager also restarts quickshell without Hyprland `env =` → WALLPAPER_DIR unset for that process.
       patchQsManagerPy =
         pkgs.writeText "patch-qs-manager.py" ''
           import os
@@ -878,15 +725,13 @@
           qs = os.environ["QUICKSHELL_EXE"]
 
           header_needle = (
-              'QS_DIR="$(cd "$(dirname "''${BASH_SOURCE[0]}")" && pwd)"\n'
-              'BT_PID_FILE="$HOME/.cache/bt_scan_pid"\n'
-              'BT_SCAN_LOG="$HOME/.cache/bt_scan.log"\n'
+              'BT_PID_FILE="$QS_RUN_DIR/bt_scan_pid"\n'
+              'BT_SCAN_LOG="$QS_LOG_DIR/bt_scan.log"\n'
               'SRC_DIR="''${WALLPAPER_DIR:-''${srcdir:-$HOME/Pictures/Wallpapers}}"\n'
           )
           header_insert = (
-              'QS_DIR="$(cd "$(dirname "''${BASH_SOURCE[0]}")" && pwd)"\n'
-              'BT_PID_FILE="$HOME/.cache/bt_scan_pid"\n'
-              'BT_SCAN_LOG="$HOME/.cache/bt_scan.log"\n'
+              'BT_PID_FILE="$QS_RUN_DIR/bt_scan_pid"\n'
+              'BT_SCAN_LOG="$QS_LOG_DIR/bt_scan.log"\n'
               '\n'
               '# NixOS: Hyprland keybind env often lacks magick/ffmpeg (wallpaper thumbnails).\n'
               'export PATH="$PATH:'
@@ -908,45 +753,29 @@
           if "Hyprland keybind env often lacks magick" not in t:
               t = t.replace(header_needle, header_insert, 1)
 
-          old_main = (
-              'if ! pgrep -f "quickshell.*Main\\.qml" >/dev/null; then\n'
-              '    quickshell -p "$MAIN_QML_PATH" >/dev/null 2>&1 &\n'
+          old_shell = (
+              'if ! pgrep -f "quickshell.*Shell.qml" >/dev/null; then\n'
+              '    quickshell -p "$SHELL_QML_PATH" >/dev/null 2>&1 &\n'
               "    disown\n"
               "fi\n"
           )
-          new_main = (
-              'if ! pgrep -f "quickshell.*Main\\.qml" >/dev/null; then\n'
+          new_shell = (
+              'if ! pgrep -f "quickshell.*Shell.qml" >/dev/null; then\n'
               + '    env NIXOS_OZONE_WL=1 WALLPAPER_DIR="$WALLPAPER_DIR" '
               + qs
-              + ' -p "$MAIN_QML_PATH" >/dev/null 2>&1 &\n'
+              + ' -p "$SHELL_QML_PATH" >/dev/null 2>&1 &\n'
               + "    disown\n"
               + "fi\n"
           )
-          old_bar = (
-              'if ! pgrep -f "quickshell.*TopBar\\.qml" >/dev/null; then\n'
-              '    quickshell -p "$BAR_QML_PATH" >/dev/null 2>&1 &\n'
-              "    disown\n"
-              "fi\n"
-          )
-          new_bar = (
-              'if ! pgrep -f "quickshell.*TopBar\\.qml" >/dev/null; then\n'
-              + '    env NIXOS_OZONE_WL=1 WALLPAPER_DIR="$WALLPAPER_DIR" '
-              + qs
-              + ' -p "$BAR_QML_PATH" >/dev/null 2>&1 &\n'
-              + "    disown\n"
-              + "fi\n"
-          )
-          if old_main not in t:
-              sys.exit("qs_manager.sh: quickshell Main.qml restart block not found")
-          if old_bar not in t:
-              sys.exit("qs_manager.sh: quickshell TopBar.qml restart block not found")
-          t = t.replace(old_main, new_main, 1)
-          t = t.replace(old_bar, new_bar, 1)
+          if old_shell not in t:
+              sys.exit("qs_manager.sh: quickshell Shell.qml restart block not found")
+          t = t.replace(old_shell, new_shell, 1)
 
+          t = t.replace("command -v swww", "command -v awww")
+          t = t.replace("swww query", "awww query")
           p.write_text(t)
         '';
 
-      # After editing hyprland.conf (layout, wallpaper env), reload Hyprland so changes apply without re-login.
       patchSettingsWatcherShPy =
         pkgs.writeText "patch-settings-watcher-sh.py" ''
           import pathlib
@@ -1005,35 +834,31 @@
             find "$out" -type f -name '*.sh' -exec chmod +x {} +
             echo 'pkill hyprpaper && hyprpaper &' > "$out/reload-hyprpaper.sh"
             chmod +x "$out/reload-hyprpaper.sh"
-            # Main.qml patches (upstream: ilyamiro/nixos-configuration):
-            # - topBarHole height matches TopBar (s(48)+top s(4)+bottom s(2)) * globalUiScale; do NOT stretch it (e.g. 160) or
-            #   the hole lets clicks through to apps (e.g. Cursor) above the real bar.
-            # - dim Rectangle under TopBar: Hyprland blur (qs-master) + slight opacity read as frosted.
-            # - dismiss cooldown: opening a widget enables overlay before mouse-up; without delay the same click closes it.
-            # (Upstream dirs may be mode 555 — chmod then rewrite.)
+            
             if [ -f "$out/quickshell/Main.qml" ]; then
               chmod -R u+w "$out"
-              ${pkgs.python3}/bin/python3 ${patchMainQmlPy} "$out"
+              ${pkgs.python3}/bin/python3 ${patchMainQmlPy} "$out" || echo "Warning: patchMainQmlPy failed, skipping."
             fi
             if [ -f "$out/quickshell/guide/GuidePopup.qml" ]; then
               chmod -R u+w "$out"
-              ${pkgs.python3}/bin/python3 ${patchGuidePopupPy} "$out"
+              ${pkgs.python3}/bin/python3 ${patchGuidePopupPy} "$out" || echo "Warning: patchGuidePopupPy failed, skipping."
               QUICKSHELL_EXE="${quickshellWrapped}/bin/quickshell" \
-                ${pkgs.python3}/bin/python3 ${patchGuideWeatherPy} "$out"
+                ${pkgs.python3}/bin/python3 ${patchGuideWeatherPy} "$out" || echo "Warning: patchGuideWeatherPy failed, skipping."
             fi
             if [ -f "$out/quickshell/calendar/weather.sh" ]; then
               chmod u+w "$out/quickshell/calendar/weather.sh"
-              ${pkgs.python3}/bin/python3 ${patchWeatherShPy} "$out"
+              ${pkgs.python3}/bin/python3 ${patchWeatherShPy} "$out" || echo "Warning: patchWeatherShPy failed, skipping."
             fi
             if [ -f "$out/quickshell/calendar/schedule/get_schedule.py" ]; then
               chmod -R u+w "$out/quickshell/calendar/schedule"
-              ${pkgs.python3}/bin/python3 ${./patches/patch-schedule.py} "$out"
+              ${pkgs.python3}/bin/python3 ${./patches/patch-schedule.py} "$out" || echo "Warning: patch-schedule.py failed, skipping."
             fi
             if [ -f "$out/quickshell/workspaces.sh" ]; then
               chmod u+w "$out/quickshell/workspaces.sh"
-              ${pkgs.python3}/bin/python3 ${patchWorkspacesShPy} "$out"
-              ${pkgs.python3}/bin/python3 ${./patches/patch-workspaces-jq.py} "$out"
+              ${pkgs.python3}/bin/python3 ${patchWorkspacesShPy} "$out" || echo "Warning: patchWorkspacesShPy failed, skipping."
+              ${pkgs.python3}/bin/python3 ${./patches/patch-workspaces-jq.py} "$out" || echo "Warning: patch-workspaces-jq.py failed, skipping."
             fi
+            
             cp ${./scripts/quickshell-sync-workspaces.sh} "$out/quickshell/sync_qs_workspaces.sh"
             ${pkgs.gnused}/bin/sed -i \
               -e 's#@HYPRCTL@#${pkgs.hyprland}/bin/hyprctl#' \
@@ -1041,78 +866,99 @@
               -e 's#@TIMEOUT@#${pkgs.coreutils}/bin/timeout#' \
               "$out/quickshell/sync_qs_workspaces.sh"
             chmod +x "$out/quickshell/sync_qs_workspaces.sh"
+            
             cp ${./scripts/quickshell-workspace-next.sh} "$out/quickshell/workspace_next.sh"
             ${pkgs.gnused}/bin/sed -i \
               -e 's#@HYPRCTL@#${pkgs.hyprland}/bin/hyprctl#' \
               -e 's#@JQ@#${pkgs.jq}/bin/jq#' \
               "$out/quickshell/workspace_next.sh"
             chmod +x "$out/quickshell/workspace_next.sh"
+            
             cp ${./scripts/quickshell-workspace-prev.sh} "$out/quickshell/workspace_prev.sh"
             ${pkgs.gnused}/bin/sed -i \
               -e 's#@HYPRCTL@#${pkgs.hyprland}/bin/hyprctl#' \
               -e 's#@JQ@#${pkgs.jq}/bin/jq#' \
               "$out/quickshell/workspace_prev.sh"
             chmod +x "$out/quickshell/workspace_prev.sh"
+            
             if [ -f "$out/quickshell/TopBar.qml" ]; then
               chmod u+w "$out/quickshell/TopBar.qml"
-              ${pkgs.python3}/bin/python3 ${patchTopBarWeatherIpcPy} "$out"
-              ${pkgs.python3}/bin/python3 ${./patches/patch-topbar-bar-margins.py} "$out"
-              ${pkgs.python3}/bin/python3 ${./patches/patch-topbar-workspaces.py} "$out"
+              ${pkgs.python3}/bin/python3 ${patchTopBarWeatherIpcPy} "$out" || echo "Warning: patchTopBarWeatherIpcPy failed, skipping."
+              ${pkgs.python3}/bin/python3 ${./patches/patch-topbar-bar-margins.py} "$out" || echo "Warning: patch-topbar-bar-margins.py failed, skipping."
+              ${pkgs.python3}/bin/python3 ${./patches/patch-topbar-workspaces.py} "$out" || echo "Warning: patch-topbar-workspaces.py failed, skipping."
             fi
+            
             if [ -f "$out/quickshell/battery/BatteryPopup.qml" ]; then
               chmod u+w "$out/quickshell/battery/BatteryPopup.qml"
               ${pkgs.gnused}/bin/sed -i \
                 's#powerprofilesctl#${pkgs.power-profiles-daemon}/bin/powerprofilesctl#g' \
                 "$out/quickshell/battery/BatteryPopup.qml"
             fi
+            
             if [ -f "$out/quickshell/wallpaper/WallpaperPicker.qml" ]; then
               chmod -R u+w "$out"
               MATUGEN_EXE="${lib.getExe pkgs.matugen}" \
-                ${pkgs.python3}/bin/python3 ${patchWallpaperPickerPy} "$out"
+                ${pkgs.python3}/bin/python3 ${patchWallpaperPickerPy} "$out" || echo "Warning: patchWallpaperPickerPy failed, skipping."
             fi
+            
             if [ -f "$out/quickshell/settings/SettingsPopup.qml" ]; then
               chmod -R u+w "$out"
               QUICKSHELL_EXE="${quickshellWrapped}/bin/quickshell" \
-                ${pkgs.python3}/bin/python3 ${patchSettingsPopupPy} "$out"
+                ${pkgs.python3}/bin/python3 ${patchSettingsPopupPy} "$out" || echo "Warning: patchSettingsPopupPy failed, skipping."
             fi
+            
             if [ -f "$out/quickshell/WindowRegistry.js" ]; then
               chmod -R u+w "$out"
-              ${pkgs.python3}/bin/python3 ${patchWindowRegistryJs} "$out"
+              ${pkgs.python3}/bin/python3 ${patchWindowRegistryJs} "$out" || echo "Warning: patchWindowRegistryJs failed, skipping."
             fi
+            
             if [ -f "$out/qs_manager.sh" ]; then
               chmod u+w "$out/qs_manager.sh"
               MAGICK_BINDIR="${pkgs.imagemagick}/bin" \
               FFMPEG_BINDIR="${pkgs.ffmpeg-headless}/bin" \
               JQ_EXE="${pkgs.jq}/bin/jq" \
               QUICKSHELL_EXE="${quickshellWrapped}/bin/quickshell" \
-                ${pkgs.python3}/bin/python3 ${patchQsManagerPy} "$out"
+                ${pkgs.python3}/bin/python3 ${patchQsManagerPy} "$out" || echo "Warning: patchQsManagerPy failed, skipping."
             fi
-            # Main/TopBar/Scaler QML + settings_watcher.sh use `inotifywait` for IPC.
-            # Hyprland exec-once often has a minimal PATH → command not found, widgets never open.
+
             chmod -R u+w "$out"
-            # One substitution per line: with `g`, `/nix/.../bin/inotifywait` would match again and double the path.
             find "$out" -type f \( -name '*.qml' -o -name '*.sh' \) -print0 | \
               xargs -0 ${pkgs.gnused}/bin/sed -i \
                 's|inotifywait|${pkgs.inotify-tools}/bin/inotifywait|'
-            # After global inotifywait substitution (avoid double-prefix on WallpaperPicker).
+                
             if [ -f "$out/quickshell/wallpaper/WallpaperPicker.qml" ]; then
               chmod u+w "$out/quickshell/wallpaper/WallpaperPicker.qml"
               ${pkgs.gnused}/bin/sed -i \
-                's|@INOTIFYWAIT@|${pkgs.inotify-tools}/bin/inotifywait|g' \
+                -e 's|@INOTIFYWAIT@|${pkgs.inotify-tools}/bin/inotifywait|g' \
+                -e 's/swww img/awww img/g' \
+                -e 's/swww_debug/awww_debug/g' \
                 "$out/quickshell/wallpaper/WallpaperPicker.qml"
             fi
+            
             if [ -f "$out/settings_watcher.sh" ]; then
               chmod u+w "$out/settings_watcher.sh"
-              ${pkgs.python3}/bin/python3 ${patchSettingsWatcherShPy} "$out"
+              ${pkgs.python3}/bin/python3 ${patchSettingsWatcherShPy} "$out" || echo "Warning: patchSettingsWatcherShPy failed, skipping."
             fi
+            
             if [ -f "$out/quickshell/wallpaper/matugen_reload.sh" ]; then
               chmod u+w "$out/quickshell/wallpaper/matugen_reload.sh"
+
+              # Fix killall -> pkill (killall is not available on NixOS by default)
+              ${pkgs.gnused}/bin/sed -i 's|killall -USR1 \.kitty-wrapped|pkill -USR1 -f kitty 2>/dev/null|g' \
+                "$out/quickshell/wallpaper/matugen_reload.sh"
+              ${pkgs.gnused}/bin/sed -i 's|killall -USR1 cava|pkill -USR1 -x cava 2>/dev/null|g' \
+                "$out/quickshell/wallpaper/matugen_reload.sh"
+
+              # Wrap swaync-client in timeout to prevent infinite hang when swaync is not running
+              ${pkgs.gnused}/bin/sed -i 's|swaync-client -rs|timeout 2 swaync-client -rs 2>/dev/null|g' \
+                "$out/quickshell/wallpaper/matugen_reload.sh"
+
               {
                 echo ""
                 echo "# --- quickshell-shell (Nix): Hyprland + Quickshell pick up matugen output ---"
                 echo "hyprctl reload 2>/dev/null || true"
-                echo "${quickshellWrapped}/bin/quickshell -p \"\$HOME/.config/hypr/scripts/quickshell/Main.qml\" ipc call main forceReload 2>/dev/null || true"
-                echo "${quickshellWrapped}/bin/quickshell -p \"\$HOME/.config/hypr/scripts/quickshell/TopBar.qml\" ipc call topbar forceReload 2>/dev/null || true"
+                echo "${quickshellWrapped}/bin/quickshell -p \"\$HOME/.config/hypr/scripts/quickshell/Shell.qml\" ipc call main forceReload 2>/dev/null || true"
+                echo "${quickshellWrapped}/bin/quickshell -p \"\$HOME/.config/hypr/scripts/quickshell/Shell.qml\" ipc call topbar forceReload 2>/dev/null || true"
               } >> "$out/quickshell/wallpaper/matugen_reload.sh"
             fi
           '';
@@ -1127,7 +973,7 @@
                 reload_apps = false
 
                 [templates.quickshell]
-                input_path = "${hm}/.config/hypr/scripts/quickshell/colors.json.template"
+                input_path = "${hm}/.config/matugen/templates/qs_colors.json.template"
                 output_path = "/tmp/qs_colors.json"
 
                 [templates.hyprland]
@@ -1138,17 +984,7 @@
                 input_path = "${hm}/.config/matugen/templates/gtk.css.template"
                 output_path = "${hm}/.cache/matugen/colors-gtk.css"
 
-                [templates.rofi]
-                input_path = "${hm}/.config/matugen/templates/rofi.rasi.template"
-                output_path = "${hm}/.config/rofi/theme.rasi"
 
-                [templates.swayosd]
-                input_path = "${hm}/.config/matugen/templates/swayosd.css.template"
-                output_path = "${hm}/.config/swayosd/style.css"
-
-                [templates.swaync]
-                input_path = "${hm}/.config/matugen/templates/swaync.css.template"
-                output_path = "${hm}/.config/swaync/style.css"
 
                 [templates.kitty]
                 input_path = "${hm}/.config/matugen/templates/kitty-colors.conf.template"
@@ -1177,7 +1013,7 @@
           #
           # Disable in hyprland-base.conf when using this shell:
           #   - exec-once waybar …   (TopBar replaces it)
-          #   - exec-once hyprpaper … if you use swww here instead
+          #   - exec-once hyprpaper … if you use awww here instead
           #
           # Matugen → ~/.config/hypr/colors.conf (relative path: same dir as hyprland.conf).
           source = colors.conf
@@ -1185,21 +1021,18 @@
           env = NIXOS_OZONE_WL,1
           env = WALLPAPER_DIR,${qs.wallpaperDirectory}
 
-          exec-once = ${pkgs.swww}/bin/swww-daemon
+          exec-once = ${pkgs.awww}/bin/awww-daemon
           exec-once = ${pkgs.playerctl}/bin/playerctld
           exec-once = ${pkgs.wl-clipboard}/bin/wl-paste --type text --watch ${pkgs.cliphist}/bin/cliphist store
           exec-once = ${pkgs.wl-clipboard}/bin/wl-paste --type image --watch ${pkgs.cliphist}/bin/cliphist store
           exec-once = bash ${hyprScripts}/settings_watcher.sh &
           exec-once = bash ${hyprScripts}/volume_listener.sh
           # Pass WALLPAPER_DIR explicitly — Quickshell sometimes does not inherit Hyprland `env =` entries on all setups.
-          exec-once = ${pkgs.coreutils}/bin/env NIXOS_OZONE_WL=1 WALLPAPER_DIR=${qs.wallpaperDirectory} ${quickshellWrapped}/bin/quickshell -p ${config.home.homeDirectory}/.config/hypr/scripts/quickshell/Main.qml
-          exec-once = ${pkgs.coreutils}/bin/env NIXOS_OZONE_WL=1 WALLPAPER_DIR=${qs.wallpaperDirectory} ${quickshellWrapped}/bin/quickshell -p ${config.home.homeDirectory}/.config/hypr/scripts/quickshell/TopBar.qml
+          exec-once = ${pkgs.coreutils}/bin/env NIXOS_OZONE_WL=1 WALLPAPER_DIR=${qs.wallpaperDirectory} ${quickshellWrapped}/bin/quickshell -p ${config.home.homeDirectory}/.config/hypr/scripts/quickshell/Shell.qml
           exec-once = ${pkgs.python3}/bin/python3 ${config.home.homeDirectory}/.config/hypr/scripts/quickshell/focustime/focus_daemon.py &
 
           # Синтаксис Hyprland 0.53+: см. https://wiki.hyprland.org/Configuring/Window-Rules/#layer-rules
           layerrule = blur on, ignore_alpha 0.05, match:namespace qs-master
-          # Верхняя панель Quickshell часто без отдельного namespace в QML — при необходимости добавьте правило
-          # после `hyprctl layers` (только match:namespace, не match:class).
 
           layerrule = no_anim on, match:namespace ^(volume_osd)$
           layerrule = no_anim on, match:namespace ^(brightness_osd)$
@@ -1208,8 +1041,6 @@
 
           $qsMod = CTRL_ALT
 
-          # Carousel 1..workspaceCount (wrap). Base: `bind = $mainMod ALT, left` → SUPER+ALT+arrow (mods space-separated: SUPER ALT, key).
-          # `SUPER, ALT, left` is wrong: Hyprland treats `left` as dispatcher → "invalid dispatcher left".
           unbind = SUPER ALT, left
           unbind = SUPER ALT, right
           unbind = SUPER_ALT, left
@@ -1221,9 +1052,7 @@
           bind = SUPER_ALT_SHIFT, period, exec, ${pkgs.bash}/bin/bash ${config.home.homeDirectory}/.config/hypr/scripts/quickshell/workspace_next.sh
           bind = SUPER_ALT_SHIFT, comma, exec, ${pkgs.bash}/bin/bash ${config.home.homeDirectory}/.config/hypr/scripts/quickshell/workspace_prev.sh
 
-          # Same action as Guide "Toggle Wallpaper" (upstream used SUPER+W); optional duplicate if nothing else uses SUPER+W in hyprland-base.conf.
           bind = SUPER, W, exec, bash ~/.config/hypr/scripts/qs_manager.sh toggle wallpaper
-          # hyprland-base.conf often binds $mainMod,R to hyprlauncher — unbind so only rofi remains.
           unbind = SUPER, R
           bind = SUPER, R, exec, bash ~/.config/hypr/scripts/rofi_show.sh drun
 
@@ -1237,7 +1066,6 @@
           bind = $qsMod, Q, exec, bash ~/.config/hypr/scripts/qs_manager.sh toggle music
           bind = $qsMod, B, exec, bash ~/.config/hypr/scripts/qs_manager.sh toggle battery
           bind = $qsMod, W, exec, bash ~/.config/hypr/scripts/qs_manager.sh toggle wallpaper
-          # Cursor/VS Code often grabs Ctrl+Alt+W — use this if wallpaper never opens from W.
           bind = $qsMod, P, exec, bash ~/.config/hypr/scripts/qs_manager.sh toggle wallpaper
           bind = $qsMod, S, exec, bash ~/.config/hypr/scripts/qs_manager.sh toggle calendar
           bind = $qsMod, N, exec, bash ~/.config/hypr/scripts/qs_manager.sh toggle network
@@ -1275,7 +1103,7 @@
         power-profiles-daemon
         quickshellWrapped
         matugen
-        swww
+        awww
         rofi
         imagemagick
         ffmpeg
@@ -1296,7 +1124,6 @@
         ripgrep
         bluez
         libnotify
-        # TopBar.qml uses font.family "Iosevka Nerd Font" for NF glyphs (help/search/settings icons).
         pkgs.nerd-fonts.iosevka
       ];
 
@@ -1304,7 +1131,6 @@
 
       home.file.".config/hypr/quickshell-integration.conf".source = integrationConf;
 
-      # Do not manage settings.json as a home.file (store symlink) — Quickshell Apply must overwrite a real file.
       home.sessionVariables.WALLPAPER_DIR = qs.wallpaperDirectory;
 
       home.activation.quickshellWallpaperDir =
@@ -1360,11 +1186,11 @@
         Quickshell UI (ilyamiro-style) is enabled from Nix.
 
         1) Comment out `exec-once = waybar …` in ~/.config/hypr/hyprland-base.conf (TopBar replaces Waybar).
-        2) Pick ONE wallpaper daemon: either comment `exec-once = hyprpaper` and use swww from integration,
+        2) Pick ONE wallpaper daemon: either comment `exec-once = hyprpaper` and use awww from integration,
            or set quickshellShell.enable = false and keep hyprpaper only.
         3) Wallpaper: put images in quickshellShell.wallpaperDirectory (also WALLPAPER_DIR). Default is ~/Pictures/Wallpapers —
            if your folder is ~/Pictures/wallpaper, set quickshellShell.wallpaperDirectory in home module.
-           Quick set: swww img /path/to/file.jpg
+           Quick set: awww img /path/to/file.jpg
            Theme from image: matugen image /path/to/file.jpg -q   (-q avoids extra noise; ensure ~/.cache/matugen exists)
            Widget: CTRL+ALT+W or SUPER+W; if nothing opens (e.g. Cursor steals Ctrl+Alt+W) use CTRL+ALT+P.
            Hyprland accents: matugen writes ~/.config/hypr/colors.conf; quickshell-integration.conf sources it.
@@ -1409,8 +1235,6 @@
         ''
       );
 
-      # Must load after hyprland-base.conf so carousel `unbind = SUPER ALT, left/right`
-      # runs against the base `workspace -1/+1` binds (HM merges plain extraConfig before mkAfter).
       wayland.windowManager.hyprland.extraConfig = lib.mkAfter ''
         source = ~/.config/hypr/quickshell-integration.conf
       '';
