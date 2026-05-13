@@ -14,7 +14,7 @@
     wallpaperDirectory = lib.mkOption {
       type = lib.types.str;
       default = "${config.home.homeDirectory}/Pictures/Wallpapers";
-      description = "Wallpaper folder for swww / wallpaper picker (env WALLPAPER_DIR).";
+      description = "Wallpaper folder for awww / wallpaper picker (env WALLPAPER_DIR).";
     };
 
     gtkMatugenTheme = lib.mkOption {
