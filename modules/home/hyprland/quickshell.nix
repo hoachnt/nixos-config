@@ -919,6 +919,19 @@
               JQ_EXE="${pkgs.jq}/bin/jq" \
               QUICKSHELL_EXE="${quickshellWrapped}/bin/quickshell" \
                 ${pkgs.python3}/bin/python3 ${patchQsManagerPy} "$out" || echo "Warning: patchQsManagerPy failed, skipping."
+              # Fix bluetoothctl scan off (non-interactive)
+              ${pkgs.gnused}/bin/sed -i \
+                's|(bluetoothctl scan off|(echo "scan off" \| bluetoothctl|g' \
+                "$out/qs_manager.sh"
+            fi
+
+            if [ -f "$out/quickshell/network/bluetooth_panel_logic.sh" ]; then
+              chmod u+w "$out/quickshell/network/bluetooth_panel_logic.sh"
+              ${pkgs.python3}/bin/python3 ${./patches/patch-bluetooth-panel.py} "$out" || echo "Warning: patch-bluetooth-panel.py failed, skipping."
+            fi
+            if [ -f "$out/quickshell/watchers/bt_fetch.sh" ]; then
+              chmod u+w "$out/quickshell/watchers/bt_fetch.sh"
+              ${pkgs.python3}/bin/python3 ${./patches/patch-bt-fetch.py} "$out" || echo "Warning: patch-bt-fetch.py failed, skipping."
             fi
 
             chmod -R u+w "$out"
