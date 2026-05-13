@@ -6,10 +6,7 @@
 
     hyprland.url = "github:hyprwm/Hyprland/v0.53.0";
 
-    Hyprspace = {
-      url = "github:KZDKM/Hyprspace";
-      inputs.hyprland.follows = "hyprland";
-    };
+    
 
     home-manager.url = "github:nix-community/home-manager";
     home-manager.inputs.nixpkgs.follows = "nixpkgs";
@@ -24,7 +21,6 @@
       self,
       nixpkgs,
       hyprland,
-      Hyprspace,
       home-manager,
       ...
     }@inputs:

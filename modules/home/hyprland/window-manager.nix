@@ -11,7 +11,6 @@ in
 
     package = hypr.hyprlandPackage;
 
-    plugins = [ hypr.hyprspacePlugin ];
 
     extraConfig = ''
       env = GTK_USE_PORTAL,1

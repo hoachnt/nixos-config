@@ -5,5 +5,4 @@ let
 in
 {
   hyprlandPackage = inputs.hyprland.packages.${system}.hyprland;
-  hyprspacePlugin = inputs.Hyprspace.packages.${system}.Hyprspace;
 }
