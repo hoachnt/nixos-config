@@ -934,6 +934,11 @@
               ${pkgs.python3}/bin/python3 ${./patches/patch-bt-fetch.py} "$out" || echo "Warning: patch-bt-fetch.py failed, skipping."
             fi
 
+            if [ -f "$out/quickshell/applauncher/app_fetcher.py" ]; then
+              chmod u+w "$out/quickshell/applauncher/app_fetcher.py"
+              ${pkgs.python3}/bin/python3 ${./patches/patch-app-fetcher.py} "$out" || echo "Warning: patch-app-fetcher.py failed, skipping."
+            fi
+
             chmod -R u+w "$out"
             find "$out" -type f \( -name '*.qml' -o -name '*.sh' \) -print0 | \
               xargs -0 ${pkgs.gnused}/bin/sed -i \
@@ -1067,7 +1072,7 @@
 
           bind = SUPER, W, exec, bash ~/.config/hypr/scripts/qs_manager.sh toggle wallpaper
           unbind = SUPER, R
-          bind = SUPER, R, exec, bash ~/.config/hypr/scripts/rofi_show.sh drun
+          bind = SUPER, R, exec, bash ~/.config/hypr/scripts/qs_manager.sh toggle applauncher
 
           bind = $qsMod, D, exec, bash ~/.config/hypr/scripts/rofi_show.sh drun
           bind = $qsMod, TAB, exec, bash ~/.config/hypr/scripts/rofi_show.sh window
