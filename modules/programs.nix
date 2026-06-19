@@ -13,7 +13,6 @@ let
 
     # Сетевые утилиты
     wget
-    wireguard-tools
     nftables
     libnetfilter_queue
     iproute2

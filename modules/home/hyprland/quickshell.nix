@@ -773,6 +773,36 @@
 
           t = t.replace("command -v swww", "command -v awww")
           t = t.replace("swww query", "awww query")
+
+          # Fix WiFi/Bluetooth widget switching race condition:
+          # Move mode file write AFTER the IPC call so the NetworkPopup's
+          # modeReader (100ms polling) doesn't update activeMode before the
+          # IPC handler processes the toggle command.
+          old_network_block = (
+              '    if [[ "$TARGET" == "network" ]]; then\n'
+              '        handle_network_prep\n'
+              '        [[ -n "$SUBTARGET" ]] && echo "$SUBTARGET" > "$NETWORK_MODE_FILE"\n'
+              '        quickshell -p "$SHELL_QML_PATH" ipc call main handleCommand "$ACTION" "$TARGET" "$SUBTARGET" >/dev/null 2>&1\n'
+              '        exit 0\n'
+              '    fi\n'
+          )
+          new_network_block = (
+              '    if [[ "$TARGET" == "network" ]]; then\n'
+              '        handle_network_prep\n'
+              '        quickshell -p "$SHELL_QML_PATH" ipc call main handleCommand "$ACTION" "$TARGET" "$SUBTARGET" >/dev/null 2>&1\n'
+              '        [[ -n "$SUBTARGET" ]] && echo "$SUBTARGET" > "$NETWORK_MODE_FILE"\n'
+              '        exit 0\n'
+              '    fi\n'
+          )
+          if old_network_block in t:
+              t = t.replace(old_network_block, new_network_block, 1)
+          else:
+              # Try without leading spaces (different indentation)
+              old_net2 = old_network_block.replace("    ", "")
+              new_net2 = new_network_block.replace("    ", "")
+              if old_net2 in t:
+                  t = t.replace(old_net2, new_net2, 1)
+
           p.write_text(t)
         '';
 

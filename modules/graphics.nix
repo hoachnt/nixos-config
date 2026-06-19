@@ -38,9 +38,7 @@ in
   # Display Manager
   services.displayManager.gdm.enable = true;
 
-  # Desktop Manager
-  # services.desktopManager.gnome.enable = true;
-
+  
   # Quickshell battery widget calls `powerprofilesctl`; needs daemon + client in PATH.
   services.power-profiles-daemon.enable = true;
 
