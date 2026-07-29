@@ -10,8 +10,11 @@
     enableDefaultPackages = true;
 
     packages = with pkgs; [
-      # GTK / GNOME UI default (dconf org.gnome.desktop.interface font-name)
+      # GTK / GNOME UI default
       cantarell-fonts
+      inter
+      roboto
+      ubuntu-classic
 
       noto-fonts
       noto-fonts-cjk-sans
@@ -21,25 +24,35 @@
       liberation_ttf
       corefonts
 
-      # Upstream TopBar.qml uses plain "JetBrains Mono" for clock/labels (see ilyamiro repo).
+      # Monospace / Nerd Fonts
       jetbrains-mono
       nerd-fonts.jetbrains-mono
-      # Icons / NF glyphs use "Iosevka Nerd Font" in QML.
       nerd-fonts.iosevka
     ];
 
     fontconfig = {
       enable = true;
+      allowBitmaps = false;
+      antialias = true;
+      hinting = {
+        enable = true;
+        style = "slight";
+      };
+      subpixel = {
+        rgba = "rgb";
+        lcdfilter = "default";
+      };
 
       defaultFonts = {
         monospace = [
-          # fc-match family names from JetBrains Mono + NFM (Quickshell TopBar asks for "JetBrains Mono")
           "JetBrains Mono"
           "JetBrainsMono Nerd Font Mono"
           "Noto Color Emoji"
         ];
         sansSerif = [
+          "Inter"
           "Cantarell"
+          "Roboto"
           "Noto Sans"
           "Noto Color Emoji"
           "Noto Sans CJK SC"

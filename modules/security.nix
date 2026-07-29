@@ -6,15 +6,17 @@
 }:
 
 {
-  # Настройки безопасности
+  # Разрешаем запускать unprivileged sandboxes без SUID
+  boot.kernel.sysctl = {
+    "kernel.unprivileged_userns_clone" = 1;
+  };
+
   security = {
-    # Sudo настройки для группы wheel
     sudo = {
       enable = true;
-      wheelNeedsPassword = false; # sudo без пароля для wheel группы
+      wheelNeedsPassword = false;
     };
 
-    # Защита образа ядра от модификации
     protectKernelImage = true;
   };
 }

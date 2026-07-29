@@ -15,8 +15,7 @@ configuration.nix (главный файл)
         ├── security.nix
         ├── networking.nix
         ├── locale.nix
-        ├── graphics.nix     # Hyprland (NixOS): `programs.hyprland` — пакет из modules/hypr-inputs.nix
-        ├── hypr-inputs.nix  # Общие inputs Hyprland + Hyprspace (NixOS + Home Manager)
+        ├── graphics.nix     # NVIDIA, X server, GNOME
         ├── audio.nix
         ├── programs.nix
         ├── users.nix
@@ -24,14 +23,7 @@ configuration.nix (главный файл)
         └── home/            # Home Manager
             ├── default.nix
             ├── packages.nix
-            ├── desktop.nix
-            └── hyprland/      # Hyprland + Quickshell (HM); ~/.config/hypr — пользовательский base + сгенер. скрипты
-                ├── default.nix
-                ├── window-manager.nix
-                ├── quickshell-options.nix
-                ├── quickshell.nix
-                ├── patches/
-                └── scripts/
+            └── desktop.nix
     ↓
 home.nix → импортирует modules/home/default.nix
 ```

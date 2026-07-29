@@ -21,7 +21,7 @@
     ./modules/locale.nix # Часовой пояс, локализация
 
     # Аппаратное обеспечение
-    ./modules/graphics.nix # NVIDIA, X server, Hyprland, GNOME
+    ./modules/graphics.nix # NVIDIA, X server, GNOME
     ./modules/audio.nix # Pipewire, Bluetooth
 
     # Программы и пользователи

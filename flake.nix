@@ -4,23 +4,14 @@
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
 
-    hyprland.url = "github:hyprwm/Hyprland/v0.53.0";
-
-    
-
     home-manager.url = "github:nix-community/home-manager";
     home-manager.inputs.nixpkgs.follows = "nixpkgs";
-
-    # Hyprland UI shell (Quickshell QML + scripts + matugen templates); content only — not a flake.
-    ilyamiro-config.url = "github:ilyamiro/nixos-configuration";
-    ilyamiro-config.flake = false;
   };
 
   outputs =
     {
       self,
       nixpkgs,
-      hyprland,
       home-manager,
       ...
     }@inputs:
@@ -33,7 +24,6 @@
         modules = [
           ./configuration.nix
 
-          hyprland.nixosModules.default
           home-manager.nixosModules.home-manager
           {
             home-manager.useGlobalPkgs = true;

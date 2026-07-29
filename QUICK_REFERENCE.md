@@ -16,23 +16,15 @@ nix/
     ├── security.nix       # Безопасность (sudo, защита ядра)
     ├── networking.nix     # Сеть (NetworkManager, firewall)
     ├── locale.nix         # Локализация (timezone, язык)
-    ├── graphics.nix       # Графика (NVIDIA, X server, Hyprland session, GNOME)
-    ├── hypr-inputs.nix    # Пакет Hyprland + Hyprspace (общий для graphics.nix и HM)
+    ├── graphics.nix       # Графика (NVIDIA, X server, GNOME)
     ├── audio.nix          # Аудио (Pipewire, Bluetooth)
     ├── programs.nix       # Системные программы
     ├── users.nix          # Пользователи и группы
     ├── fonts.nix          # Шрифты
-    └── home/              # Home Manager (пакеты, тема GTK/Qt, Hyprland+Quickshell)
+    └── home/              # Home Manager (пакеты, тема GTK/Qt)
         ├── default.nix
         ├── packages.nix
-        ├── desktop.nix
-        └── hyprland/
-            ├── default.nix
-            ├── window-manager.nix
-            ├── quickshell-options.nix
-            ├── quickshell.nix
-            ├── patches/
-            └── scripts/
+        └── desktop.nix
 ```
 
 ## 🔧 Основные команды

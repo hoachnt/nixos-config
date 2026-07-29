@@ -2,13 +2,8 @@
   config,
   lib,
   pkgs,
-  inputs,
   ...
 }:
-
-let
-  hypr = import ./hypr-inputs.nix { inherit inputs pkgs; };
-in
 
 {
   # Графическая подсистема
@@ -38,16 +33,16 @@ in
   # Display Manager
   services.displayManager.gdm.enable = true;
 
-  
-  # Quickshell battery widget calls `powerprofilesctl`; needs daemon + client in PATH.
-  services.power-profiles-daemon.enable = true;
+  # Включаем сам GNOME (Desktop Environment)
+  services.desktopManager.gnome.enable = true;
 
-  # Wayland композитор
-  programs.hyprland = {
-    enable = true;
-    package = hypr.hyprlandPackage;
-    
-    xwayland.enable = true;
+  # Переменные окружения для Wayland/Ozone (Chromium, Electron: Chrome, Cursor, Antigravity) и NVIDIA
+  environment.sessionVariables = {
+    NIXOS_OZONE_WL = "1";
+    ELECTRON_OZONE_PLATFORM_HINT = "auto";
+    LIBVA_DRIVER_NAME = "nvidia";
+    GBM_BACKEND = "nvidia-drm";
+    __GLX_VENDOR_LIBRARY_NAME = "nvidia";
   };
 
   # GTK file chooser / «открыть папку» из браузера — те же шрифты и тема, что у GTK
@@ -59,7 +54,10 @@ in
       xdg-desktop-portal-gtk
     ];
     config.common = {
-      default = [ "hyprland" "gtk" ];
+      default = [
+        "gnome"
+        "gtk"
+      ];
       "org.freedesktop.impl.portal.FileChooser" = [ "gtk" ];
       "org.freedesktop.impl.portal.OpenURI" = [ "gtk" ];
       # Тёмная тема / accent для порталов и части Flatpak без полного GNOME Shell

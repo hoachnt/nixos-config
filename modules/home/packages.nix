@@ -1,20 +1,9 @@
 { pkgs, ... }:
 {
   home.packages = with pkgs; [
-    waybar
     kitty
-    wlogout
-    wofi
-    hyprpaper
-    hyprshot
-    hyprlock
-    hypridle
-    hyprsunset
-    hyprlauncher
-    hyprtoolkit
     wl-clipboard
     brightnessctl
-    swaynotificationcenter
     libnotify
     networkmanagerapplet
     pulseaudio
@@ -52,8 +41,9 @@
     libadwaita
 
     gcc
-    antigravity
-
+    
     obs-studio
+
+    antigravity
   ];
 }

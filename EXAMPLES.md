@@ -194,38 +194,6 @@ xdg.configFile."gtk-4.0/gtk.css" = {
 - Кастомный CSS применяется
 - При переустановке системы настройки восстановятся автоматически
 
----
-
-### Пример 6: Как работает Hyprland конфигурация
-
-```nix
-# home.nix
-wayland.windowManager.hyprland = {
-  enable = true;
-  extraConfig = ''
-    source = /home/hoachnt/.config/hypr/hyprland-base.conf
-  '';
-};
-```
-
-**Что происходит:**
-
-1. Home Manager генерирует `~/.config/hypr/hyprland.conf`:
-
-    ```ini
-    # Этот файл управляется Home Manager
-    source = /home/hoachnt/.config/hypr/hyprland-base.conf
-    ```
-
-2. Hyprland при запуске:
-    - Читает `~/.config/hypr/hyprland.conf`
-    - Видит `source = ...`
-    - Загружает ваш кастомный конфиг из `hyprland-base.conf`
-
-3. Преимущества:
-    - Home Manager управляет базовой структурой
-    - Вы управляете деталями в `hyprland-base.conf`
-    - При обновлении Home Manager не перезапишет ваш конфиг
 
 ---
 

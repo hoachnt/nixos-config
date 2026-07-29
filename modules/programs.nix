@@ -20,7 +20,7 @@ let
     # Инструменты разработки
     git
     go
-    nodejs_20
+    nodejs
     pnpm
     python3
 
@@ -41,10 +41,42 @@ in
     binfmt = true;
   };
 
+  programs.nix-ld = {
+    enable = true;
+    libraries = with pkgs; [
+      stdenv.cc.cc.lib
+      glib
+      nspr
+      nss
+      atk
+      at-spi2-core
+      dbus
+      cups
+      expat
+      libxkbcommon
+      alsa-lib
+      libgbm
+      cairo
+      pango
+      systemd
+      libdrm
+      libxcb
+      libx11
+      libxext
+      libxcomposite
+      libxdamage
+      libxfixes
+      libxrandr
+      libxshmfence
+      libGL
+    ];
+  };
+
+
   # Сервисы
   services.flatpak.enable = true;
 
-  # GVfs: trash://, сеть в боковой панели Nautilus и т.д. Без этого на Hyprland часто «trash not supported».
+  # GVfs: trash://, сеть в боковой панели Nautilus и т.д.
   services.gvfs.enable = true;
 
   # Виртуализация
